@@ -110,4 +110,4 @@ function startProxy(port = 8080) {
   });
 }
 
-startProxy(8080);
+startProxy(process.env.PORT);
