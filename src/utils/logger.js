@@ -4,7 +4,7 @@
  * @return {void}
  */
 export function log(msg) {
-	console.log(msg);
+	console.log(`\n ${msg}`);
 }
 
 /**
@@ -13,5 +13,5 @@ export function log(msg) {
  * @return {void}
  */
 export function error(msg) {
-	console.error(msg);
+	console.error(`\n ${msg}`);
 }
