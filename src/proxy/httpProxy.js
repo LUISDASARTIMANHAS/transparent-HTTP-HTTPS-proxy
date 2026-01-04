@@ -1,50 +1,104 @@
+// proxy/httpProxy.js
 import http from "http";
+import dns from "dns";
 import { resolveTarget } from "./resolveTarget.js";
-import { log, error } from "../utils/logger.js";
+import { logTraffic } from "../utils/trafficLogger.js";
+import { error } from "../utils/logger.js";
 
 /**
- * Proxy HTTP explícito
+ * Proxy HTTP explícito com logging completo e proteção contra falhas
  * @param {import("http").IncomingMessage} req
  * @param {import("http").ServerResponse} res
  * @return {void}
  */
 export function handleProxy(req, res) {
-	let target;
+  let target;
+  let reqBody = Buffer.alloc(0);
 
-	try {
-		target = resolveTarget(req);
-	} catch (err) {
-		error(`[PROXY] ${err.message}`);
-		res.writeHead(400);
-		return res.end("Bad Request");
-	}
+  try {
+    target = resolveTarget(req);
+  } catch (err) {
+    error(`[HTTP] ${err.message}`);
+    res.writeHead(400);
+    return res.end("Bad Request");
+  }
 
-	log(`[PROXY] ${req.method} → ${target.hostname}${target.pathname}`);
+  // Captura body da request
+  req.on("data", (chunk) => {
+    reqBody = Buffer.concat([reqBody, chunk]);
+  });
 
-	const headers = { ...req.headers };
-	headers.host = target.host;
-	delete headers["proxy-connection"];
-	delete headers["connection"];
+  // Resolve DNS manualmente (prioriza IPv4)
+  dns.lookup(target.hostname, { family: 4 }, (dnsErr, address) => {
+    if (dnsErr) {
+      error(`[DNS HTTP] ${target.hostname} não resolvido`);
+      res.writeHead(502);
+      return res.end("Bad Gateway");
+    }
 
-	const proxyReq = http.request(
-		{
-			hostname: target.hostname,
-			port: target.port || 80,
-			path: target.pathname + target.search,
-			method: req.method,
-			headers
-		},
-		(proxyRes) => {
-			res.writeHead(proxyRes.statusCode, proxyRes.headers);
-			proxyRes.pipe(res);
-		}
-	);
+    const proxyReq = http.request(
+      {
+        host: address,
+        port: target.port || 80,
+        path: target.pathname + target.search,
+        method: req.method,
+        headers: {
+          ...req.headers,
+          host: target.host,
+        },
+        timeout: 10_000, // 10 segundos
+      },
+      (proxyRes) => {
+        let resBody = Buffer.alloc(0);
 
-	req.pipe(proxyReq);
+        proxyRes.on("data", (chunk) => {
+          resBody = Buffer.concat([resBody, chunk]);
+        });
 
-	proxyReq.on("error", (err) => {
-		error(`[PROXY ERRO] ${err.message}`);
-		res.writeHead(502);
-		res.end("Bad Gateway");
-	});
+        proxyRes.on("end", () => {
+          logTraffic({
+            protocol: "HTTP",
+            clientIp: req.socket.remoteAddress,
+            method: req.method,
+            url: req.url,
+            userAgent: req.headers["user-agent"],
+            requestHeaders: req.headers,
+            requestBody: reqBody.toString(),
+            statusCode: proxyRes.statusCode,
+            responseHeaders: proxyRes.headers,
+            responseBody: resBody.toString(),
+          });
+        });
+
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      }
+    );
+
+    // 🔴 ERRO DE CONEXÃO / TIMEOUT / RESET
+    proxyReq.on("error", (err) => {
+      error(`[HTTP PROXY] ${err.code || err.message}`);
+      if (!res.headersSent) {
+        res.writeHead(504);
+      }
+      res.end();
+    });
+
+    // 🔴 TIMEOUT EXPLÍCITO
+    proxyReq.on("timeout", () => {
+      error("[HTTP PROXY] TIMEOUT");
+      proxyReq.destroy();
+      if (!res.headersSent) {
+        res.writeHead(504);
+        res.end();
+      }
+    });
+
+    // 🔴 CLIENTE FECHOU CONEXÃO
+    req.on("aborted", () => {
+      proxyReq.destroy();
+    });
+
+    req.pipe(proxyReq);
+  });
 }

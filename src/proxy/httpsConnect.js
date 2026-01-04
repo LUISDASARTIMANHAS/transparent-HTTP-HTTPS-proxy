@@ -1,31 +1,54 @@
+// httpsConnect.js
 import net from "net";
-import { log, error } from "../utils/logger.js";
+import dns from "dns";
+import { logTraffic } from "../utils/trafficLogger.js";
+import { error } from "../utils/logger.js";
 
 /**
- * Handler HTTPS (CONNECT)
+ * Handler HTTPS CONNECT com tratamento de erro
  * @param {import("http").IncomingMessage} req
  * @param {import("net").Socket} clientSocket
  * @param {Buffer} head
  * @return {void}
  */
 export function handleConnect(req, clientSocket, head) {
-	const [host, port] = req.url.split(":");
+  const [host, port] = req.url.split(":");
 
-	log(`[CONNECT] ${host}:${port}`);
+  logTraffic({
+  protocol: "HTTPS",
+  clientIp: clientSocket.remoteAddress,
+  host,
+  port,
+  note: "TLS tunnel - payload criptografado (CONNECT)"
+});
 
-	const serverSocket = net.connect(port, host, () => {
-		clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-		serverSocket.write(head);
-		serverSocket.pipe(clientSocket);
-		clientSocket.pipe(serverSocket);
-	});
+  dns.lookup(host, (err, address) => {
+    if (err) {
+      error(`[DNS] ${host} não resolvido`);
+      clientSocket.write(
+        "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+      );
+      return clientSocket.destroy();
+    }
 
-	serverSocket.on("error", () => {
-		error(`[CONNECT ERRO] ${host}:${port}`);
-		clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-	});
+    const serverSocket = net.connect(port, address);
 
-	clientSocket.on("error", () => {
-		serverSocket.end();
-	});
+    serverSocket.on("connect", () => {
+      clientSocket.write(
+        "HTTP/1.1 200 Connection Established\r\n\r\n"
+      );
+      if (head?.length) serverSocket.write(head);
+      serverSocket.pipe(clientSocket);
+      clientSocket.pipe(serverSocket);
+    });
+
+    serverSocket.on("error", (err) => {
+      error(`[CONNECT ERRO] ${host}:${port} ${err.code}`);
+      clientSocket.destroy();
+    });
+
+    clientSocket.on("error", () => {
+      serverSocket.destroy();
+    });
+  });
 }
