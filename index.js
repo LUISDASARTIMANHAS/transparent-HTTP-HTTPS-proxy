@@ -1,4 +1,5 @@
-import { startMinecraftProxy } from "./src/proxy/tcpProxy.js";
+import { startMinecraftProxy } from "./src/proxy/minecraftProxy.js";
+import { startTcpProxy } from "./src/proxy/tcpProxy.js";
 import { startServer } from "./src/server.js";
 
 // startServer(8080);
@@ -6,7 +7,6 @@ import { startServer } from "./src/server.js";
  * Inicializa o proxy Minecraft
  */
 startMinecraftProxy({
-  listenPort: 25565,
   targetHost: "mc.skyzermc.com.br",
   targetPort: 25652
 });

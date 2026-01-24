@@ -1,3 +1,4 @@
+// src\proxy\tcpProxy.js
 import net from "net";
 import { logTraffic } from "../utils/trafficLogger.js";
 
@@ -9,7 +10,7 @@ import { logTraffic } from "../utils/trafficLogger.js";
  * @param {number} options.targetPort Porta real
  * @return {void}
  */
-export function startMinecraftProxy({ listenPort, targetHost, targetPort }) {
+export function startTcpProxy({ listenPort, targetHost, targetPort }) {
   const server = net.createServer((clientSocket) => {
     const serverSocket = net.connect(targetPort, targetHost);
 
@@ -36,4 +37,7 @@ export function startMinecraftProxy({ listenPort, targetHost, targetPort }) {
   server.listen(listenPort, () => {
     console.log(`Proxy Minecraft ativo na porta ${listenPort}`);
   });
+
 }
+
+
